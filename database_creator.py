@@ -11,11 +11,13 @@ import sqlite3 as lite
 import re
 import time
 
-#loads data from csv file
-def load_data():
-    return pd.read_csv('planning-department-records-2018/PPTS_Records_data.csv',
-    #               parse_dates=['date_opened','date_closed',],
-                   infer_datetime_format=True)
+# creates a new database
+# to execute this from bash, please use db_create.py
+def create(source, destination):
+    data = pd.read_csv(source)
+    data, record_type, record_rel, location, planner, prj_desc, prj_desc_detail,land_use, prj_feature, dwelling, adu_area = prepare_data(data)
+    init_sql_database(destination, data, record_type, record_rel, location, planner, prj_desc,
+                      prj_desc_detail, land_use, prj_feature, dwelling, adu_area)
 
 #creates tables, cleans up columns, prints out progress
 def prepare_data(data):
@@ -54,8 +56,126 @@ def prepare_data(data):
     dwelling, adu_area = dwelling_table(data)
     comp_timer.printreport()
     comp_timer.restart()
+    print('Generating year/month/day')
+    data = ymd(data)
+    comp_timer.printreport()
+    comp_timer.restart()
     
     return data, record_type, record_rel, location, planner, prj_desc, prj_desc_detail, land_use, prj_feature, dwelling, adu_area
+
+#initializes a sql database, given all the appropriate pandas tables, and a target destination
+#for the database schema, please see database_structure.xlsx
+def init_sql_database(destination, data, record_type, record_rel, location, planner, prj_desc,
+                      prj_desc_detail, land_use, prj_feature, dwelling, adu_area):
+    con = lite.connect(destination)
+    try:
+        cur = con.cursor()
+        
+        ### record
+        sqlcmd = '''
+        create table record( 
+            record_id integer primary key,
+            record_type text,
+            planner_id integer, 
+            location_id integer, 
+            planning_id text,
+            record_name text, description text, record_status text,
+            construct_cost real, related_building_permit text, acalink text, aalink text,
+            year_opened integer, month_opened integer, day_opened integer,
+            year_closed integer, month_closed integer, day_closed integer
+             )'''
+        cur.execute(sqlcmd)
+        #create new dataframe with only the desired columns, relabeled as needed
+        data_transfer = pd.DataFrame({'planner_id':data['planner_id_int'],'location_id':data['location_id'],
+              'record_type':data['record_type_category'],'planning_id':data['record_id'],
+              'record_name':data['record_name'],'description':data['description'],
+              'record_status':data['record_status'],
+              'construct_cost':data['constructcost'], 'related_building_permit':data['RELATED_BUILDING_PERMIT'],
+              'acalink':data['acalink'],'aalink':data['aalink'],
+              'year_opened':data['year_opened'], 'month_opened':data['month_opened'], 'day_opened':data['day_opened'],
+              'year_closed':data['year_closed'], 'month_closed':data['month_closed'], 'day_closed':data['day_closed']
+            })
+        data_transfer.to_sql('record',con,if_exists='append',index_label='record_id')
+        
+        #to_sql will do a bunch of this stuff for me,
+        #but I think it's better to explicitly create the table to ensure all the types are correct
+        
+        ### planner
+        sqlcmd = '''create table planner(
+            planner_id integer primary key,
+            planner_strid text, planner_name text, planner_email text, planner_phone text)'''
+        cur.execute(sqlcmd)
+        planner.to_sql('planner',con,if_exists='append',index=False)
+        
+        ### record_type
+        sqlcmd = '''create table record_type(
+            record_type text primary key,
+            record_type_name text, record_type_subcat text, record_type_cat text)'''
+        cur.execute(sqlcmd)
+        #there was an extra column that I don't want to write to the db
+        record_type = record_type.drop(labels='original_type',axis=1)
+        record_type.to_sql('record_type',con,if_exists='append',index=False)
+        
+        ### location
+        sqlcmd = '''create table location(
+            location_id integer primary key,
+            the_geom text, address text, shape_length real, shape_area real)'''
+        cur.execute(sqlcmd)
+        location.to_sql('location',con,if_exists='append',index=False)
+        
+        ### prj_desc
+        sqlcmd = '''create table prj_desc(
+            desc_id integer primary key,
+            record_id integer, desc_type text)'''
+        cur.execute(sqlcmd)
+        prj_desc.to_sql('prj_desc',con,if_exists='append',index_label='desc_id')
+        
+        ### prj_desc_detail
+        sqlcmd = '''create table prj_desc_detail(
+            desc_id integer primary key,
+            detail text)'''
+        cur.execute(sqlcmd)
+        prj_desc_detail.to_sql('prj_desc_detail',con,if_exists='append',index=False)
+        
+        ### land_use
+        sqlcmd = '''create table land_use(
+            land_use_id integer primary key,
+            record_id integer,
+            land_use_type text, land_use_exist real, land_use_prop real,land_use_net real)'''
+        cur.execute(sqlcmd)
+        land_use.to_sql('land_use',con,if_exists='append',index_label='land_use_id')
+        
+        ### prj_feature
+        sqlcmd = '''create table prj_feature(
+            feature_id integer primary key,
+            record_id integer,
+            feature_type text, feature_exist integer, feature_prop integer, feature_net integer)'''
+        cur.execute(sqlcmd)
+        prj_feature.to_sql('prj_feature',con,if_exists='append',index_label='feature_id')
+        
+        ### dwelling
+        sqlcmd = '''create table dwelling(
+            dwelling_id integer primary key,
+            record_id integer,
+            dwelling_type text, dwelling_exist integer, dwelling_prop integer, dwelling_net integer)'''
+        cur.execute(sqlcmd)
+        dwelling.to_sql('dwelling',con,if_exists='append',index_label='dwelling_id')
+        
+        ### adu_area
+        sqlcmd = '''create table adu_area(
+            dwelling_id integer primary key,
+            area real)'''
+        cur.execute(sqlcmd)
+        adu_area.to_sql('adu_area',con,if_exists='append',index=False)
+        
+        ### record_rel
+        sqlcmd = '''create table record_rel(
+            rel_id integer primary key,
+            parent_id integer, child_id integer)'''
+        cur.execute(sqlcmd)
+        record_rel.to_sql('record_rel',con,if_exists='append',index_label='rel_id')
+    finally:    
+        con.close()
     
 #and creates a new dataframe record_type, which will eventually be made into a SQL table.
 def record_type_table(data):
@@ -89,7 +209,7 @@ def record_type_table(data):
         #if no acronym is ever found, then we have a real problem
         if not flag:
             print('Error in record_type_table(): Could not determine acronym for %s' % og_type)
-                
+    
     return record_type
 
 #clean the record_type_category column through use of the record_type table
@@ -262,6 +382,8 @@ def prj_desc_table(data):
     detail = []
     
     for col in prj_desc_cols:
+        #the following line causes a warning when performed on empty columns (such as leg_zone_change)
+        #I think the warning can be ignored.
         indices = np.where(data[col]=="CHECKED")
         if len(indices)>0:
             record_id += list(indices[0])
@@ -284,7 +406,7 @@ def prj_desc_table(data):
             detail += list(data.loc[indices[0],col])
     
     prj_desc = pd.DataFrame({'record_id':record_id,'desc_type':desc_type})
-    prj_desc_detail = pd.DataFrame({'prj_desc_id':desc_id_detail,'detail':detail})
+    prj_desc_detail = pd.DataFrame({'desc_id':desc_id_detail,'detail':detail})
     return prj_desc, prj_desc_detail
     
 #creates the land_use table in dataframe form
@@ -363,9 +485,9 @@ def prj_feature_table(data):
         prj_feature_prop += list(data.loc[indices[0],col_prop])
         prj_feature_net += list(data.loc[indices[0],col_net])
     
-    prj_feature = pd.DataFrame({'record_id':record_id,'prj_feature_type':prj_feature_type,
-                             'prj_feature_exist':prj_feature_exist,'prj_feature_prop':prj_feature_prop,
-                             'prj_feature_net':prj_feature_net})
+    prj_feature = pd.DataFrame({'record_id':record_id,'feature_type':prj_feature_type,
+                             'feature_exist':prj_feature_exist,'feature_prop':prj_feature_prop,
+                             'feature_net':prj_feature_net})
     prj_feature.fillna(value=0,inplace=True)
     
     return prj_feature
@@ -434,11 +556,33 @@ def dwelling_table(data):
     dwelling = pd.DataFrame({'record_id':record_id,'dwelling_type':dwelling_type,
                              'dwelling_exist':dwelling_exist,'dwelling_prop':dwelling_prop,
                              'dwelling_net':dwelling_net})
-    adu_area = pd.DataFrame({'dwelling_id':adu_dwelling_id,'adu_area':adu_area})
+    adu_area = pd.DataFrame({'dwelling_id':adu_dwelling_id,'area':adu_area})
     dwelling.fillna(value=0,inplace=True)
     
     return dwelling, adu_area
+
+#generates additional columns for year, month, day, for date opened and date closed
+def ymd(data):
+    #internal function that returns year, month, day, or nans if date is missing
+    def parse_date(datestr):
+        if not pd.isna(datestr):
+            m = re.match('^(\d+)/(\d+)/(\d+)',datestr)
+            return m.groups()[2], m.groups()[0], m.groups()[1]
+        else:
+            return np.nan, np.nan, np.nan
     
+    #now apply the function and unpack results
+    date_opened = data['date_opened'].apply(lambda dt: parse_date(dt))
+    date_closed = data['date_closed'].apply(lambda dt: parse_date(dt))
+    
+    data['year_opened'] = date_opened.apply(lambda dt: dt[0])
+    data['month_opened'] = date_opened.apply(lambda dt: dt[1])
+    data['day_opened'] = date_opened.apply(lambda dt: dt[2])
+    data['year_closed'] = date_closed.apply(lambda dt: dt[0])
+    data['month_closed'] = date_closed.apply(lambda dt: dt[1])
+    data['day_closed'] = date_closed.apply(lambda dt: dt[2])
+    return data
+
 #quick timer class for debugging computation time
 class timer():
     def __init__(self,start=True):
