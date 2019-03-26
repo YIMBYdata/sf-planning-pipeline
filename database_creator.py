@@ -15,9 +15,14 @@ import time
 # to execute this from bash, please use db_create.py
 def create(source, destination):
     data = pd.read_csv(source)
-    data, record_type, record_rel, location, planner, prj_desc, prj_desc_detail,land_use, prj_feature, dwelling, adu_area = prepare_data(data)
+    data, record_type, record_rel, location, planner, prj_desc, prj_desc_detail,land_use, prj_feature, dwelling, adu_area, hearing_date = prepare_data(data)
+    
+    comp_timer = timer()
+    print('Generating SQL file')
     init_sql_database(destination, data, record_type, record_rel, location, planner, prj_desc,
-                      prj_desc_detail, land_use, prj_feature, dwelling, adu_area)
+                      prj_desc_detail, land_use, prj_feature, dwelling, adu_area, hearing_date)
+    comp_timer.printreport()
+    comp_timer.restart()
 
 #creates tables, cleans up columns, prints out progress
 def prepare_data(data):
@@ -60,13 +65,20 @@ def prepare_data(data):
     data = ymd(data)
     comp_timer.printreport()
     comp_timer.restart()
+    print('Generating hearing date table')
+    hearing_date = hearing_date_table(data)
+    comp_timer.printreport()
+    comp_timer.restart()
     
-    return data, record_type, record_rel, location, planner, prj_desc, prj_desc_detail, land_use, prj_feature, dwelling, adu_area
+    #one last thing: clean nans in constructcost
+    data['constructcost'] = data['constructcost'].fillna(value=0)
+    
+    return data, record_type, record_rel, location, planner, prj_desc, prj_desc_detail, land_use, prj_feature, dwelling, adu_area, hearing_date
 
 #initializes a sql database, given all the appropriate pandas tables, and a target destination
 #for the database schema, please see database_structure.xlsx
 def init_sql_database(destination, data, record_type, record_rel, location, planner, prj_desc,
-                      prj_desc_detail, land_use, prj_feature, dwelling, adu_area):
+                      prj_desc_detail, land_use, prj_feature, dwelling, adu_area, hearing_date):
     con = lite.connect(destination)
     try:
         cur = con.cursor()
@@ -78,7 +90,7 @@ def init_sql_database(destination, data, record_type, record_rel, location, plan
             record_type text,
             planner_id integer, 
             location_id integer, 
-            planning_id text,
+            record_strid text, object_id integer, template_id text,
             record_name text, description text, record_status text,
             construct_cost real, related_building_permit text, acalink text, aalink text,
             year_opened integer, month_opened integer, day_opened integer,
@@ -87,9 +99,10 @@ def init_sql_database(destination, data, record_type, record_rel, location, plan
         cur.execute(sqlcmd)
         #create new dataframe with only the desired columns, relabeled as needed
         data_transfer = pd.DataFrame({'planner_id':data['planner_id_int'],'location_id':data['location_id'],
-              'record_type':data['record_type_category'],'planning_id':data['record_id'],
+              'record_type':data['record_type_category'],'record_strid':data['record_id'],
               'record_name':data['record_name'],'description':data['description'],
               'record_status':data['record_status'],
+              'object_id':data['OBJECTID'],'template_id':data['templateid'],
               'construct_cost':data['constructcost'], 'related_building_permit':data['RELATED_BUILDING_PERMIT'],
               'acalink':data['acalink'],'aalink':data['aalink'],
               'year_opened':data['year_opened'], 'month_opened':data['month_opened'], 'day_opened':data['day_opened'],
@@ -110,7 +123,8 @@ def init_sql_database(destination, data, record_type, record_rel, location, plan
         ### record_type
         sqlcmd = '''create table record_type(
             record_type text primary key,
-            record_type_name text, record_type_subcat text, record_type_cat text)'''
+            record_type_name text, record_type_subcat text, record_type_cat text,
+            record_type_group text, module text)'''
         cur.execute(sqlcmd)
         #there was an extra column that I don't want to write to the db
         record_type = record_type.drop(labels='original_type',axis=1)
@@ -174,6 +188,13 @@ def init_sql_database(destination, data, record_type, record_rel, location, plan
             parent_id integer, child_id integer)'''
         cur.execute(sqlcmd)
         record_rel.to_sql('record_rel',con,if_exists='append',index_label='rel_id')
+        
+        ### hearing_date
+        sqlcmd = '''create table hearing_date(
+            hearing_id integer primary key,
+            record_id integer, hearing_type text, date text)'''
+        cur.execute(sqlcmd)
+        hearing_date.to_sql('hearing_date',con,if_exists='append',index_label='hearing_id')
     finally:    
         con.close()
     
@@ -190,6 +211,8 @@ def record_type_table(data):
                 record_type.loc[i,'record_type_name'] = data.loc[j,'record_type']
                 record_type.loc[i,'record_type_cat'] = data.loc[j,'record_type_type']
                 record_type.loc[i,'record_type_subcat'] = data.loc[j,'record_type_subtype']
+                record_type.loc[i,'record_type_group'] = data.loc[j,'record_type_group']
+                record_type.loc[i,'module'] = data.loc[j,'module']
                 #check if format is standardized
                 m = re.match('^(...)$',og_type)
                 if(m or og_type=="Other"):
@@ -408,6 +431,29 @@ def prj_desc_table(data):
     prj_desc = pd.DataFrame({'record_id':record_id,'desc_type':desc_type})
     prj_desc_detail = pd.DataFrame({'desc_id':desc_id_detail,'detail':detail})
     return prj_desc, prj_desc_detail
+
+#creates the hearing_date table in dataframe form
+def hearing_date_table(data):
+    #the column names are hard-coded because if the planning department adds a new column somewhere I don't want this to break.
+    hearing_date_cols = ["BOS_1ST_READ","BOS_2ND_READ","COM_HEARING","MAYORAL_SIGN","TRANSMIT_DATE_BOS","COM_HEARING_DATE_BOS"]
+    
+    #generate lists, which will be used afterwards to create a dataframe
+    record_id = []
+    hearing_type = []
+    date = []
+    
+    for col in hearing_date_cols:
+        indices = np.where(~pd.isna(data[col]))
+        #the following line causes a warning when performed on empty columns (which is true of several of them)
+        #I think the warning can be ignored.
+        indices = np.where(data[col]=="CHECKED")
+        if len(indices)>0:
+            record_id += list(indices[0])
+            hearing_type += [col]*len(indices[0])
+            date += list(data.loc[indices[0],col])
+    
+    hearing_date = pd.DataFrame({'record_id':record_id,'hearing_type':hearing_type,'date':date})
+    return hearing_date
     
 #creates the land_use table in dataframe form
 def land_use_table(data):    
