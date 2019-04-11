@@ -11,6 +11,89 @@ import sqlite3 as lite
 import re
 import time
 
+#TODO: Separate out prj_desc_detail table into MCDReferal and EnvironmentalReview tables
+#maybe make prj_desc, land_use, and dwelling into many-to-many relationships
+#maybe combine dwelling_area with dwelling
+
+#declare names of database columns as constants, so they can be easily adjusted
+PLANNER_PK = "id"
+PLANNER_ID = "planner_id"
+PLANNER_NAME = "name"
+PLANNER_EMAIL = "email"
+PLANNER_PHONE = "phone"
+
+RECORD_TYPE_PK = "category" #3 letter acronym, ie record_type_category
+RECORD_TYPE = "name" #expansion of acronym
+RECORD_TYPE_SUBTYPE = "subtype"
+RECORD_TYPE_TYPE = "record_type"
+RECORD_TYPE_GROUP = "record_group" #can't call it record_group because group is a keyword in sqlite3
+RECORD_TYPE_MODULE = "module"
+
+LOCATION_PK = "id"
+LOCATION_GEOM = "the_geom"
+LOCATION_ADDRESS = "address"
+LOCATION_SHAPE_LENGTH = "shape_length"
+LOCATION_SHAPE_AREA = "shape_area"
+
+PRJ_DESC_PK = "id"
+PRJ_DESC_FK = "record"
+PRJ_DESC_TYPE = "desc_type"
+PRJ_DESC_DETAIL_PK = "desc_id"
+PRJ_DESC_DETAIL = "detail"
+
+LAND_USE_PK = "id"
+LAND_USE_FK = "record"
+LAND_USE_TYPE = "land_use_type"
+LAND_USE_EXIST = "exist"
+LAND_USE_PROP = "prop"
+LAND_USE_NET = "net"
+
+PRJ_FEATURE_PK = "id"
+PRJ_FEATURE_FK = "record"
+PRJ_FEATURE_TYPE = "feature_type"
+PRJ_FEATURE_EXIST = "exist"
+PRJ_FEATURE_PROP = "prop"
+PRJ_FEATURE_NET = "net"
+
+DWELLING_PK = "id"
+DWELLING_FK = "record"
+DWELLING_TYPE = "dwelling_type"
+DWELLING_EXIST = "exist"
+DWELLING_PROP = "prop"
+DWELLING_NET = "net"
+ADU_PK = "dwelling_id"
+ADU_AREA = "area"
+
+HEARING_PK = "id"
+HEARING_FK = "record"
+HEARING_TYPE = "hearing_type"
+HEARING_DATE = "date"
+
+RECORD_PK = "id"
+RECORD_FK_PLANNER = "planner"
+RECORD_FK_LOCATION = "location"
+RECORD_FK_TYPE = "category"
+RECORD_ID = "record_id"
+RECORD_OBJECT_ID = "object_id"
+RECORD_TEMPLATE_ID = "template_id"
+RECORD_NAME = "name"
+RECORD_DESCRIPTION = "description"
+RECORD_STATUS = "status"
+RECORD_CONSTRUCT_COST = "construct_cost"
+RECORD_BUILDING_PERMIT = "related_building_permit"
+RECORD_ACALINK = "acalink"
+RECORD_AALINK = "aalink"
+RECORD_YEAR_OPENED = "year_opened"
+RECORD_MONTH_OPENED = "month_opened"
+RECORD_DAY_OPENED = "day_opened"
+RECORD_YEAR_CLOSED = "year_closed"
+RECORD_MONTH_CLOSED = "month_closed"
+RECORD_DAY_CLOSED = "day_closed"
+
+RECORD_REL_PK = "id"
+RECORD_REL_PARENT = "parent"
+RECORD_REL_CHILD = "child"
+
 # creates a new database
 # to execute this from bash, please use db_create.py
 def create(source, destination):
@@ -86,45 +169,50 @@ def init_sql_database(destination, data, record_type, record_rel, location, plan
         ### record
         sqlcmd = '''
         create table record( 
-            record_id integer primary key,
-            record_type text,
-            planner_id integer, 
-            location_id integer, 
-            record_strid text, object_id integer, template_id text,
-            record_name text, description text, record_status text,
-            construct_cost real, related_building_permit text, acalink text, aalink text,
-            year_opened integer, month_opened integer, day_opened integer,
-            year_closed integer, month_closed integer, day_closed integer
-             )'''
+            %s integer primary key autoincrement,
+            %s text,
+            %s integer, 
+            %s integer, 
+            %s text, %s integer, %s text,
+            %s text, %s text, %s text,
+            %s real, %s text, %s text, %s text,
+            %s integer, %s integer, %s integer,
+            %s integer, %s integer, %s integer
+             )''' % (RECORD_PK, RECORD_FK_TYPE, RECORD_FK_PLANNER, RECORD_FK_LOCATION, RECORD_ID,
+                     RECORD_OBJECT_ID, RECORD_TEMPLATE_ID, RECORD_NAME, RECORD_DESCRIPTION, RECORD_STATUS,
+                     RECORD_CONSTRUCT_COST, RECORD_BUILDING_PERMIT, RECORD_ACALINK, RECORD_AALINK,
+                     RECORD_YEAR_OPENED, RECORD_MONTH_OPENED, RECORD_DAY_OPENED,
+                     RECORD_YEAR_CLOSED, RECORD_MONTH_CLOSED, RECORD_DAY_CLOSED)
         cur.execute(sqlcmd)
         #create new dataframe with only the desired columns, relabeled as needed
-        data_transfer = pd.DataFrame({'planner_id':data['planner_id_int'],'location_id':data['location_id'],
-              'record_type':data['record_type_category'],'record_strid':data['record_id'],
-              'record_name':data['record_name'],'description':data['description'],
-              'record_status':data['record_status'],
-              'object_id':data['OBJECTID'],'template_id':data['templateid'],
-              'construct_cost':data['constructcost'], 'related_building_permit':data['RELATED_BUILDING_PERMIT'],
-              'acalink':data['acalink'],'aalink':data['aalink'],
-              'year_opened':data['year_opened'], 'month_opened':data['month_opened'], 'day_opened':data['day_opened'],
-              'year_closed':data['year_closed'], 'month_closed':data['month_closed'], 'day_closed':data['day_closed']
+        data_transfer = pd.DataFrame({                
+              RECORD_FK_PLANNER:data['planner_id_int'],RECORD_FK_LOCATION:data['location_id'],
+              RECORD_FK_TYPE:data['record_type_category'],RECORD_ID:data['record_id'],
+              RECORD_NAME:data['record_name'],RECORD_DESCRIPTION:data['description'],
+              RECORD_STATUS:data['record_status'],
+              RECORD_OBJECT_ID:data['OBJECTID'],RECORD_TEMPLATE_ID:data['templateid'],
+              RECORD_CONSTRUCT_COST:data['constructcost'], RECORD_BUILDING_PERMIT:data['RELATED_BUILDING_PERMIT'],
+              RECORD_ACALINK:data['acalink'],RECORD_AALINK:data['aalink'],
+              RECORD_YEAR_OPENED:data['year_opened'], RECORD_MONTH_OPENED:data['month_opened'], RECORD_DAY_OPENED:data['day_opened'],
+              RECORD_YEAR_CLOSED:data['year_closed'], RECORD_MONTH_CLOSED:data['month_closed'], RECORD_DAY_CLOSED:data['day_closed']
             })
-        data_transfer.to_sql('record',con,if_exists='append',index_label='record_id')
+        data_transfer.to_sql('record',con,if_exists='append',index_label=RECORD_PK)
         
         #to_sql will do a bunch of this stuff for me,
         #but I think it's better to explicitly create the table to ensure all the types are correct
         
         ### planner
         sqlcmd = '''create table planner(
-            planner_id integer primary key,
-            planner_strid text, planner_name text, planner_email text, planner_phone text)'''
+            %s integer primary key autoincrement,
+            %s text, %s text, %s text, %s text)''' % (PLANNER_PK,PLANNER_ID,PLANNER_NAME,PLANNER_EMAIL,PLANNER_PHONE)
         cur.execute(sqlcmd)
         planner.to_sql('planner',con,if_exists='append',index=False)
         
         ### record_type
         sqlcmd = '''create table record_type(
-            record_type text primary key,
-            record_type_name text, record_type_subcat text, record_type_cat text,
-            record_type_group text, module text)'''
+            %s text primary key,
+            %s text, %s text, %s text,
+            %s text, %s text)''' % (RECORD_TYPE_PK,RECORD_TYPE,RECORD_TYPE_SUBTYPE,RECORD_TYPE_TYPE,RECORD_TYPE_GROUP,RECORD_TYPE_MODULE)
         cur.execute(sqlcmd)
         #there was an extra column that I don't want to write to the db
         record_type = record_type.drop(labels='original_type',axis=1)
@@ -132,69 +220,69 @@ def init_sql_database(destination, data, record_type, record_rel, location, plan
         
         ### location
         sqlcmd = '''create table location(
-            location_id integer primary key,
-            the_geom text, address text, shape_length real, shape_area real)'''
+            %s integer primary key autoincrement,
+            %s text, %s text, %s real, %s real)''' % (LOCATION_PK,LOCATION_GEOM,LOCATION_ADDRESS,LOCATION_SHAPE_LENGTH,LOCATION_SHAPE_AREA)
         cur.execute(sqlcmd)
         location.to_sql('location',con,if_exists='append',index=False)
         
         ### prj_desc
         sqlcmd = '''create table prj_desc(
-            desc_id integer primary key,
-            record_id integer, desc_type text)'''
+            %s integer primary key autoincrement,
+            %s integer, %s text)''' % (PRJ_DESC_PK, PRJ_DESC_FK, PRJ_DESC_TYPE)
         cur.execute(sqlcmd)
-        prj_desc.to_sql('prj_desc',con,if_exists='append',index_label='desc_id')
+        prj_desc.to_sql('prj_desc',con,if_exists='append',index_label=PRJ_DESC_PK)
         
         ### prj_desc_detail
         sqlcmd = '''create table prj_desc_detail(
-            desc_id integer primary key,
-            detail text)'''
+            %s integer primary key,
+            %s text)''' % (PRJ_DESC_DETAIL_PK, PRJ_DESC_DETAIL)
         cur.execute(sqlcmd)
         prj_desc_detail.to_sql('prj_desc_detail',con,if_exists='append',index=False)
         
         ### land_use
         sqlcmd = '''create table land_use(
-            land_use_id integer primary key,
-            record_id integer,
-            land_use_type text, land_use_exist real, land_use_prop real,land_use_net real)'''
+            %s integer primary key autoincrement,
+            %s integer,
+            %s text, %s real, %s real,%s real)''' % (LAND_USE_PK, LAND_USE_FK, LAND_USE_TYPE, LAND_USE_EXIST, LAND_USE_PROP, LAND_USE_NET)
         cur.execute(sqlcmd)
-        land_use.to_sql('land_use',con,if_exists='append',index_label='land_use_id')
+        land_use.to_sql('land_use',con,if_exists='append',index_label=LAND_USE_PK)
         
         ### prj_feature
         sqlcmd = '''create table prj_feature(
-            feature_id integer primary key,
-            record_id integer,
-            feature_type text, feature_exist integer, feature_prop integer, feature_net integer)'''
+            %s integer primary key autoincrement,
+            %s integer,
+            %s text, %s integer, %s integer, %s integer)''' % (PRJ_FEATURE_PK, PRJ_FEATURE_FK, PRJ_FEATURE_TYPE, PRJ_FEATURE_EXIST, PRJ_FEATURE_PROP, PRJ_FEATURE_NET)
         cur.execute(sqlcmd)
-        prj_feature.to_sql('prj_feature',con,if_exists='append',index_label='feature_id')
+        prj_feature.to_sql('prj_feature',con,if_exists='append',index_label=PRJ_FEATURE_PK)
         
         ### dwelling
         sqlcmd = '''create table dwelling(
-            dwelling_id integer primary key,
-            record_id integer,
-            dwelling_type text, dwelling_exist integer, dwelling_prop integer, dwelling_net integer)'''
+            %s integer primary key autoincrement,
+            %s integer,
+            %s text, %s integer, %s integer, %s integer)''' % (DWELLING_PK, DWELLING_FK, DWELLING_TYPE, DWELLING_EXIST, DWELLING_PROP, DWELLING_NET)
         cur.execute(sqlcmd)
-        dwelling.to_sql('dwelling',con,if_exists='append',index_label='dwelling_id')
-        
+        dwelling.to_sql('dwelling',con,if_exists='append',index_label=DWELLING_PK)
+                           
         ### adu_area
         sqlcmd = '''create table adu_area(
-            dwelling_id integer primary key,
-            area real)'''
+            %s integer primary key,
+            %s real)''' % (ADU_PK, ADU_AREA)
         cur.execute(sqlcmd)
         adu_area.to_sql('adu_area',con,if_exists='append',index=False)
         
         ### record_rel
         sqlcmd = '''create table record_rel(
-            rel_id integer primary key,
-            parent_id integer, child_id integer)'''
+            %s integer primary key autoincrement,
+            %s integer, %s integer)''' % (RECORD_REL_PK, RECORD_REL_PARENT, RECORD_REL_CHILD)
         cur.execute(sqlcmd)
-        record_rel.to_sql('record_rel',con,if_exists='append',index_label='rel_id')
+        record_rel.to_sql('record_rel',con,if_exists='append',index_label=RECORD_REL_PK)
         
         ### hearing_date
         sqlcmd = '''create table hearing_date(
-            hearing_id integer primary key,
-            record_id integer, hearing_type text, date text)'''
+            %s integer primary key,
+            %s integer, %s text, %s text)''' % (HEARING_PK, HEARING_FK, HEARING_TYPE, HEARING_DATE)
         cur.execute(sqlcmd)
-        hearing_date.to_sql('hearing_date',con,if_exists='append',index_label='hearing_id')
+        hearing_date.to_sql('hearing_date',con,if_exists='append',index_label=HEARING_PK)
     finally:    
         con.close()
     
@@ -208,26 +296,26 @@ def record_type_table(data):
         flag = False
         for j, r_type in enumerate(data['record_type_category']):
             if(r_type == og_type):
-                record_type.loc[i,'record_type_name'] = data.loc[j,'record_type']
-                record_type.loc[i,'record_type_cat'] = data.loc[j,'record_type_type']
-                record_type.loc[i,'record_type_subcat'] = data.loc[j,'record_type_subtype']
-                record_type.loc[i,'record_type_group'] = data.loc[j,'record_type_group']
-                record_type.loc[i,'module'] = data.loc[j,'module']
+                record_type.loc[i,RECORD_TYPE] = data.loc[j,'record_type']
+                record_type.loc[i,RECORD_TYPE_TYPE] = data.loc[j,'record_type_type']
+                record_type.loc[i,RECORD_TYPE_SUBTYPE] = data.loc[j,'record_type_subtype']
+                record_type.loc[i,RECORD_TYPE_GROUP] = data.loc[j,'record_type_group']
+                record_type.loc[i,RECORD_TYPE_MODULE] = data.loc[j,'module']
                 #check if format is standardized
                 m = re.match('^(...)$',og_type)
                 if(m or og_type=="Other"):
-                    record_type.loc[i,'record_type'] = og_type
+                    record_type.loc[i,RECORD_TYPE] = og_type
                     flag = True
                     break
                 else:
                     #if format is not standardized, try to find the acronym
                     m = re.match('^.* \((...)\)',data.loc[j,'record_type'])
                     if(m):
-                        record_type.loc[i,'record_type'] = m.groups()[0]
+                        record_type.loc[i,RECORD_TYPE] = m.groups()[0]
                         flag = True
                         break
                     else:
-                        record_type.loc[i,'record_type'] = og_type
+                        record_type.loc[i,RECORD_TYPE] = og_type
                         #if no acronym is found, better keep looking by continuing the for loop
         #if no acronym is ever found, then we have a real problem
         if not flag:
@@ -239,7 +327,7 @@ def record_type_table(data):
 def clean_record_type(data,record_type):
     record_type_dict = {}
     for row in record_type.index:
-        record_type_dict[record_type.loc[row,'original_type']] = record_type.loc[row,'record_type']
+        record_type_dict[record_type.loc[row,'original_type']] = record_type.loc[row,RECORD_TYPE]
     data['record_type_category'] = data.apply(lambda row: record_type_dict[row['record_type_category']],axis=1)
     return data
 
@@ -264,7 +352,7 @@ def record_rel_table(data):
                 except:
                     pass
     
-    record_rel = pd.DataFrame({'child_id':child_list,'parent_id':parent_list})
+    record_rel = pd.DataFrame({RECORD_REL_CHILD:child_list,RECORD_REL_PARENT:parent_list})
     return record_rel
 
 #creates a new dataframe for unique locations
@@ -295,14 +383,14 @@ def location_table(data):
         addresstimer = timer(start=False)
         
         #create location dataframe
-        location = pd.DataFrame({'the_geom':list(lid_dict.keys())})
-        for i,geom in enumerate(location['the_geom']):
+        location = pd.DataFrame({LOCATION_GEOM:list(lid_dict.keys())})
+        for i,geom in enumerate(location[LOCATION_GEOM]):
             tablepoptimer.start()
             curr_lid = lid_dict[geom]
-            location.loc[i,'location_id'] = curr_lid
+            location.loc[i,LOCATION_PK] = curr_lid
             ilist = index_list[curr_lid]
-            location.loc[i,'shape_length'] = data.loc[ilist[0],'Shape_Length']
-            location.loc[i,'shape_area'] = data.loc[ilist[0],'Shape_Area']
+            location.loc[i,LOCATION_SHAPE_LENGTH] = data.loc[ilist[0],'Shape_Length']
+            location.loc[i,LOCATION_SHAPE_AREA] = data.loc[ilist[0],'Shape_Area']
             tablepoptimer.pause()
             
             addresstimer.start()
@@ -310,7 +398,7 @@ def location_table(data):
             for index in ilist:
                 address = data.loc[index,'address']
                 if not pd.isna(address):
-                    location.loc[i,'address'] = address
+                    location.loc[i,LOCATION_ADDRESS] = address
                     break
                 #if none is ever found, then address will remain as nan
             addresstimer.pause()
@@ -356,16 +444,16 @@ def planner_table(data):
         tablepoptimer = timer()
         
         #create location dataframe
-        planner_t = pd.DataFrame({'planner_strid':list(pid_dict.keys())})
-        for i,planner in enumerate(planner_t['planner_strid']):
+        planner_t = pd.DataFrame({PLANNER_ID:list(pid_dict.keys())})
+        for i,planner in enumerate(planner_t[PLANNER_ID]):
             curr_pid = pid_dict[planner]
-            planner_t.loc[i,'planner_id'] = curr_pid
+            planner_t.loc[i,PLANNER_PK] = curr_pid
             
             #get e-mail, phone, and name
             index = index_dict[curr_pid]
-            planner_t.loc[i,'planner_email'] = data.loc[index,'planner_email']
-            planner_t.loc[i,'planner_phone'] = data.loc[index,'planner_phone']
-            planner_t.loc[i,'planner_name'] = data.loc[index,'planner_name']
+            planner_t.loc[i,PLANNER_EMAIL] = data.loc[index,'planner_email']
+            planner_t.loc[i,PLANNER_PHONE] = data.loc[index,'planner_phone']
+            planner_t.loc[i,PLANNER_NAME] = data.loc[index,'planner_name']
         
         tablepoptimer.pause()
             
@@ -428,8 +516,8 @@ def prj_desc_table(data):
             desc_id_detail += range(start,start+len(indices[0]))
             detail += list(data.loc[indices[0],col])
     
-    prj_desc = pd.DataFrame({'record_id':record_id,'desc_type':desc_type})
-    prj_desc_detail = pd.DataFrame({'desc_id':desc_id_detail,'detail':detail})
+    prj_desc = pd.DataFrame({PRJ_DESC_FK:record_id,PRJ_DESC_TYPE:desc_type})
+    prj_desc_detail = pd.DataFrame({PRJ_DESC_DETAIL_PK:desc_id_detail,PRJ_DESC_DETAIL:detail})
     return prj_desc, prj_desc_detail
 
 #creates the hearing_date table in dataframe form
@@ -452,7 +540,7 @@ def hearing_date_table(data):
             hearing_type += [col]*len(indices[0])
             date += list(data.loc[indices[0],col])
     
-    hearing_date = pd.DataFrame({'record_id':record_id,'hearing_type':hearing_type,'date':date})
+    hearing_date = pd.DataFrame({HEARING_FK:record_id,HEARING_TYPE:hearing_type,HEARING_DATE:date})
     return hearing_date
     
 #creates the land_use table in dataframe form
@@ -481,9 +569,9 @@ def land_use_table(data):
             land_use_prop += list(data.loc[indices[0],col_prop])
             land_use_net += list(data.loc[indices[0],col_net])
     
-    land_use = pd.DataFrame({'record_id':record_id,'land_use_type':land_use_type,
-                             'land_use_exist':land_use_exist,'land_use_prop':land_use_prop,
-                             'land_use_net':land_use_net})
+    land_use = pd.DataFrame({LAND_USE_FK:record_id,LAND_USE_TYPE:land_use_type,
+                             LAND_USE_EXIST:land_use_exist,LAND_USE_PROP:land_use_prop,
+                             LAND_USE_NET:land_use_net})
     land_use.fillna(value=0,inplace=True)
     
     return land_use
@@ -531,9 +619,9 @@ def prj_feature_table(data):
         prj_feature_prop += list(data.loc[indices[0],col_prop])
         prj_feature_net += list(data.loc[indices[0],col_net])
     
-    prj_feature = pd.DataFrame({'record_id':record_id,'feature_type':prj_feature_type,
-                             'feature_exist':prj_feature_exist,'feature_prop':prj_feature_prop,
-                             'feature_net':prj_feature_net})
+    prj_feature = pd.DataFrame({PRJ_FEATURE_FK:record_id,PRJ_FEATURE_TYPE:prj_feature_type,
+                             PRJ_FEATURE_EXIST:prj_feature_exist,PRJ_FEATURE_PROP:prj_feature_prop,
+                             PRJ_FEATURE_NET:prj_feature_net})
     prj_feature.fillna(value=0,inplace=True)
     
     return prj_feature
@@ -599,10 +687,10 @@ def dwelling_table(data):
             dwelling_prop += list(data.loc[indices[0],col_prop])
             dwelling_net += list(data.loc[indices[0],col_net])
             
-    dwelling = pd.DataFrame({'record_id':record_id,'dwelling_type':dwelling_type,
-                             'dwelling_exist':dwelling_exist,'dwelling_prop':dwelling_prop,
-                             'dwelling_net':dwelling_net})
-    adu_area = pd.DataFrame({'dwelling_id':adu_dwelling_id,'area':adu_area})
+    dwelling = pd.DataFrame({DWELLING_FK:record_id,DWELLING_TYPE:dwelling_type,
+                             DWELLING_EXIST:dwelling_exist,DWELLING_PROP:dwelling_prop,
+                             DWELLING_NET:dwelling_net})
+    adu_area = pd.DataFrame({ADU_PK:adu_dwelling_id,ADU_AREA:adu_area})
     dwelling.fillna(value=0,inplace=True)
     
     return dwelling, adu_area
